@@ -11,6 +11,35 @@
 
 #define MAXEVENTS 64 //epoll支持的最大的监听事件个数
 
+/*typedef union epoll_data*/
+/*{*/
+	/*void        *ptr;*/
+	/*int          fd;*/
+	/*__uint32_t   u32;*/
+	/*__uint64_t   u64;*/
+
+/*} epoll_data_t;*/
+
+/*struct epoll_event*/
+/*{*/
+	/*__uint32_t   events; [> Epoll events <]*/
+	/*epoll_data_t data;   [> User data variable <]*/
+
+/*};*/
+
+/*struct addrinfo*/
+/*{*/
+	/*int              ai_flags;*/
+	/*int              ai_family;*/
+	/*int              ai_socktype;*/
+	/*int              ai_protocol;*/
+	/*size_t           ai_addrlen;*/
+	/*struct sockaddr *ai_addr;*/
+	/*char            *ai_canonname;*/
+	/*struct addrinfo *ai_next;*/
+
+/*};*/
+
 /*设置一个socket为非阻塞，如果是监听socket，则accept()为非阻塞
 如果其他的socket，则read(), write()为非阻塞*/
 static int make_socket_non_blocking (int sfd)
@@ -35,7 +64,7 @@ static int make_socket_non_blocking (int sfd)
 	return 0;
 }
 
-/* 这一步一般不会太大的改变，至于为什么要循环地尝试绑定地址结构，google getaddrinfo() */
+/* 这一步一般不会太大的改变 */
 static int create_and_bind (char *port)
 {
 	struct addrinfo hints;
@@ -43,9 +72,9 @@ static int create_and_bind (char *port)
 	int s, sfd;
 
 	memset (&hints, 0, sizeof (struct addrinfo));
-	hints.ai_family = AF_UNSPEC;     
-	hints.ai_socktype = SOCK_STREAM; 
-	hints.ai_flags = AI_PASSIVE;    
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_flags = AI_PASSIVE;
 
 	s = getaddrinfo (NULL, port, &hints, &result);
 	if (s != 0)
@@ -109,7 +138,7 @@ int main (int argc, char *argv[])
 		abort ();
 	}
 
-	efd = epoll_create (1); //1其实没用，因为内核会动态增加
+	efd = epoll_create1 (0);
 	if (efd == -1)
 	{
 		perror ("epoll_create");
@@ -117,7 +146,7 @@ int main (int argc, char *argv[])
 	}
 
 	event.data.fd = sfd;
-	event.events = EPOLLIN | EPOLLET;
+	event.events = EPOLLIN | EPOLLET; //EPOLLET边缘触发模式, EPOLLIN连接到达，或者有数据来临
 	s = epoll_ctl (efd, EPOLL_CTL_ADD, sfd, &event);
 	if (s == -1)
 	{
@@ -125,7 +154,7 @@ int main (int argc, char *argv[])
 		abort ();
 	}
 
-	/* 这里就是存放所有发生的事件 */
+	/* 这里就是存放所有即将发生的事件, 只要socket上又事件发生，就会放进events集合里 */
 	events = calloc (MAXEVENTS, sizeof event);
 
 	/* The event loop */
@@ -139,7 +168,8 @@ int main (int argc, char *argv[])
 		for (i = 0; i < n; i++)/* 进入循环，处理事件 */
 		{
 
-			if ((events[i].events & EPOLLERR) || // 如果当前事件出现EPOLLERR EPOLLHUP EPOLLIN, 则不处理，啥意思google吧
+			// EPOLLERR服务器自己出错，EPOLLHUP对端关闭，EPOLLIN对端有数据
+			if ((events[i].events & EPOLLERR) ||
 					(events[i].events & EPOLLHUP) ||
 					(!(events[i].events & EPOLLIN)))
 			{
@@ -201,7 +231,7 @@ int main (int argc, char *argv[])
 			else //非监听socket上有事件，说明有写数据了，我们这个时候要把所有的数据读完，因为是edge-triggered模式，不读完的话，下次针对余下的数据
 				 //就不再会有事件了
 			{
-				int done = 0; 
+				int done = 0;
 
 				while (1)
 				{
